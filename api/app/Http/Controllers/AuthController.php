@@ -5,10 +5,12 @@ namespace App\Http\Controllers;
 use App\Http\Requests\LoginRequest;
 use App\Http\Requests\RegisterRequest;
 use App\Models\User;
+use App\Services\AuthService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use OpenApi\Annotations as OA;
+use PHPOpenSourceSaver\JWTAuth\Facades\JWTAuth;
 
 /**
  * @OA\Tag(
@@ -18,9 +20,16 @@ use OpenApi\Annotations as OA;
  */
 class AuthController extends Controller
 {
+    private AuthService $authService;
+
+    public function __construct(AuthService $authService)
+    {
+        $this->authService = $authService;
+    }
+
     /**
      * @OA\Post(
-     *     path="/api/register",
+     *     path="/api/auth/register",
      *     summary="Registra um novo usuário",
      *     tags={"Autenticação"},
      *     @OA\RequestBody(
@@ -55,7 +64,7 @@ class AuthController extends Controller
             'password' => Hash::make($request->password),
         ]);
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = JWTAuth::fromUser($user);
 
         return response()->json([
             'user' => $user,
@@ -65,7 +74,7 @@ class AuthController extends Controller
 
     /**
      * @OA\Post(
-     *     path="/api/login",
+     *     path="/api/auth/login",
      *     summary="Autentica um usuário",
      *     tags={"Autenticação"},
      *     @OA\RequestBody(
@@ -96,14 +105,15 @@ class AuthController extends Controller
      */
     public function login(LoginRequest $request): JsonResponse
     {
-        if (!Auth::attempt($request->only('email', 'password'))) {
+        $credentials = $request->only('email', 'password');
+
+        if (!$token = JWTAuth::attempt($credentials)) {
             return response()->json([
                 'message' => 'Credenciais inválidas',
             ], 401);
         }
 
         $user = User::where('email', $request->email)->firstOrFail();
-        $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
             'user' => $user,
@@ -113,7 +123,7 @@ class AuthController extends Controller
 
     /**
      * @OA\Post(
-     *     path="/api/logout",
+     *     path="/api/auth/logout",
      *     summary="Realiza logout do usuário",
      *     tags={"Autenticação"},
      *     security={{"bearerAuth": {}}},
@@ -130,13 +140,20 @@ class AuthController extends Controller
      *     )
      * )
      */
-    public function logout(): JsonResponse
+    public function logout()
     {
-        Auth::user()->tokens()->delete();
+        try {
+            JWTAuth::invalidate(JWTAuth::getToken());
 
-        return response()->json([
-            'message' => 'Logout realizado com sucesso',
-        ]);
+            return response()->json([
+                'message' => 'Logout realizado com sucesso',
+            ]);
+        } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
+            return response()->json([
+                'message' => 'Erro ao realizar logout',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
